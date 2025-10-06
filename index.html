@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>StreamCenter — Safe View</title>
+<style>
+  :root{--accent:#00ccff;--glass: rgba(255,255,255,0.04);--card-w:200px}
+  body{margin:0;font-family:Poppins,sans-serif;background:linear-gradient(135deg,#000,#111);color:#fff;text-align:center}
+  header{padding:28px 12px}
+  h1{color:var(--accent);text-shadow:0 0 12px var(--accent);margin:0 0 12px;font-size:2rem}
+  .controls{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:10px 12px}
+  input[type="search"]{width:60%;max-width:420px;padding:12px 16px;border-radius:28px;border:none;background:rgba(255,255,255,0.08);color:#fff;font-size:16px;outline:none}
+  button{padding:10px 16px;border-radius:20px;border:none;background:var(--accent);color:#000;cursor:pointer}
+  .settingsBtn{background:transparent;border:1px solid rgba(255,255,255,0.08);color:#fff}
+  .layout{max-width:1200px;margin:26px auto;padding:0 12px}
+  .grid{display:flex;flex-wrap:wrap;gap:20px;justify-content:center}
+  .card{width:var(--card-w);background:var(--glass);border-radius:12px;overflow:hidden;backdrop-filter:blur(6px);transition:transform .22s,box-shadow .22s}
+  .card:hover{transform:translateY(-6px);box-shadow:0 6px 20px rgba(0,204,255,0.08)}
+  .poster{width:100%;height:300px;object-fit:cover;display:block}
+  .meta{padding:10px;font-size:14px;text-align:left}
+  .title{font-weight:600;color:#fff;margin-bottom:6px}
+  .rating{font-size:13px;color:#ffd166}
+  .providers{font-size:12px;color:var(--accent);margin-top:8px}
+  .actions{display:flex;gap:8px;justify-content:center;padding:10px}
+  .smallBtn{padding:8px 10px;border-radius:8px;border:none;cursor:pointer;font-size:13px}
+  .playBtn{background:#1db954;color:#000}
+  .trailerBtn{background:#ff0000;color:#fff}
+  .blurred .poster{filter:blur(10px) grayscale(.3);transform:scale(1.02)}
+  .blurred .overlay{position:relative;margin-top:-300px;height:300px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;text-shadow:0 0 8px rgba(0,0,0,0.6)}
+  .overlay small{display:block;font-weight:400;font-size:12px;margin-top:6px;color:#ddd}
+  .modal{position:fixed;right:12px;top:80px;background:rgba(0,0,0,0.85);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);width:320px;max-width:calc(100% - 24px);}
+  .modal h3{margin:2px 0 8px;color:var(--accent)}
+  .modal label{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(255,255,255,0.03)}
+  .modal .close{position:absolute;right:8px;top:6px;background:transparent;border:none;color:#fff}
+  footer{padding:18px;color:#bbb;font-size:13px}
+  @media (max-width:520px){:root{--card-w:46vw}.poster{height:46vw}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎬 StreamCenter — Safe View</h1>
+  <div class="controls">
+    <input id="q" type="search" placeholder="Search movies or TV shows..." aria-label="Search" />
+    <button id="searchBtn">Search</button>
+    <button id="openSettings" class="settingsBtn">⚙ Settings</button>
+  </div>
+</header>
+
+<main class="layout">
+  <div id="results" class="grid" aria-live="polite"></div>
+</main>
+
+<div id="settings" class="modal" style="display:none">
+  <button id="closeSettings" class="close">✕</button>
+  <h3>Blur Settings (choose exactly what to blur)</h3>
+  <div>
+    <label><input type="checkbox" data-tag="nudity"> Blur: Nudity</label>
+    <label><input type="checkbox" data-tag="sex"> Blur: Sex Scenes</label>
+    <label><input type="checkbox" data-tag="sexual"> Blur: Sexual Content (broad)</label>
+    <label><input type="checkbox" data-tag="violence"> Blur: Violence</label>
+    <label><input type="checkbox" data-tag="gore"> Blur: Gore</label>
+    <label><input type="checkbox" data-tag="profanity"> Blur: Strong Language / Profanity</label>
+    <label><input type="checkbox" data-tag="drug"> Blur: Drug Use</label>
+    <label><input type="checkbox" data-tag="adult"> Blur: Adult (18+)</label>
+    <small style="display:block;margin-top:8px;color:#aaa">Tip: Combine toggles to fine-tune. Filter uses TMDB keywords + adult flag + overview scanning.</small>
+  </div>
+</div>
+
+<footer>© StreamCenter • This app redirects to official provider pages when available. No video files stored here.</footer>
+
+<script>
+const TMDB_KEY = "YOUR_TMDB_API_KEY"; // <-- replace with your TMDB key
+const TMDB_BASE = "https://api.themoviedb.org/3";
+const COUNTRY = "US";
+
+const qInput = document.getElementById('q');
+const searchBtn = document.getElementById('searchBtn');
+const resultsDiv = document.getElementById('results');
+const settingsBtn = document.getElementById('openSettings');
+const settingsModal = document.getElementById('settings');
+const closeSettings = document.getElementById('closeSettings');
+
+settingsBtn.addEventListener('click', ()=> settingsModal.style.display='block');
+closeSettings.addEventListener('click', ()=> settingsModal.style.display='none');
+
+function getChosenTags(){
+  const checks = Array.from(settingsModal.querySelectorAll('input[type="checkbox"]'));
+  return checks.filter(c => c.checked).map(c => c.dataset.tag);
+}
+
+const TAG_KEYWORDS = {
+  nudity: ['nudity','nude','nudism'],
+  sex: ['sex scenes','sex scene'],
+  sexual: ['sexual','sexual content'],
+  violence: ['violence','assault','fight','war','abuse'],
+  gore: ['gore','blood','gruesome','graphic'],
+  profanity: ['profanity','swear','language'],
+  drug: ['drug','drugs','substance abuse'],
+  adult: ['adult']
+};
+
+function matchesSensitiveTags(tagsLower, overviewLower, chosenTags){
+  for(const chosen of chosenTags){
+    const kws = TAG_KEYWORDS[chosen] || [];
+    for(const k of kws){
+      if(tagsLower.includes(k) || overviewLower.includes(k)) return true;
+    }
+    if(overviewLower.includes(chosen)) return true;
+  }
+  return false;
+}
+
+searchBtn.addEventListener('click', ()=> performSearch());
+qInput.addEventListener('keydown', (e)=> { if(e.key === 'Enter') performSearch(); });
+
+async function performSearch(){
+  const q = qInput.value.trim();
+  if(!q) return;
+  resultsDiv.innerHTML = '<p style="width:100%;text-align:center;color:#ccc">Searching...</p>';
+  const chosen = getChosenTags();
+
+  const types = ['movie','tv'];
+  const combined = [];
+  for(const t of types){
+    try{
+      const r = await fetch(`${TMDB_BASE}/search/${t}?api_key=${TMDB_KEY}&query=${encodeURIComponent(q)}`).then(r=>r.json());
+      const items = r.results || [];
+      for(const it of items){
+        const [keywordsData, providersData] = await Promise.all([
+          fetch(`${TMDB_BASE}/${t}/${it.id}/keywords?api_key=${TMDB_KEY}`).then(r=>r.json()).catch(()=>({})),
+          fetch(`${TMDB_BASE}/${t}/${it.id}/watch/providers?api_key=${TMDB_KEY}`).then(r=>r.json()).catch(()=>({}))
+        ]);
+        let kwlist = [];
+        if (keywordsData.keywords) kwlist = keywordsData.keywords.map(k=>k.name.toLowerCase());
+        else if (keywordsData.results) kwlist = keywordsData.results.map(k=> (k.name||'').toLowerCase());
+        let providerEntry = null;
+        const countryData = (providersData.results && (providersData.results[COUNTRY] || providersData.results['US'])) || null;
+        if(countryData && countryData.link) providerEntry = {link: countryData.link, providers: (countryData.flatrate||[]).map(p=>p.provider_name).join(', ')};
+        const rating = it.vote_average ? Number(it.vote_average).toFixed(1) : null;
+        const overview = (it.overview || '').toLowerCase();
+        const isAdult = !!it.adult;
+        combined.push({
+          id: it.id, type: t, title: it.title || it.name,
+          poster: it.poster_path, rating, providerEntry, keywords: kwlist, overview, isAdult
+        });
+      }
+    } catch(err){ console.warn('search error',err); }
+  }
+
+  resultsDiv.innerHTML = '';
+  if(combined.length === 0) { resultsDiv.innerHTML = '<p style="color:#ccc">No results</p>'; return; }
+
+  for(const item of combined){
+    const card = document.createElement('div');
+    card.className = 'card';
+    const chosenTags = getChosenTags();
+    const tagsLower = item.keywords.join(' ');
+    const overviewLower = item.overview || '';
+    let shouldBlur = false;
+    if(item.isAdult && chosenTags.includes('adult')) shouldBlur = true;
+    if(matchesSensitiveTags(tagsLower, overviewLower, chosenTags)) shouldBlur = true;
+    if(shouldBlur) card.classList.add('blurred');
+
+    if(item.poster){
+      const img = document.createElement('img');
+      img.className = 'poster';
+      img.src = `https://image.tmdb.org/t/p/w500${item.poster}`;
+      img.alt = item.title;
+      card.appendChild(img);
+    } else {
+      const stub = document.createElement('div');
+      stub.style.height = '300px';
+      stub.style.display='flex';stub.style.alignItems='center';stub.style.justifyContent='center';
+      stub.style.background='rgba(255,255,255,0.02)';stub.textContent='No image';
+      card.appendChild(stub);
+    }
+
+    if(shouldBlur){
+      const ov = document.createElement('div');
+      ov.className = 'overlay';
+      ov.innerHTML = `<div><div>⚠️ Filtered</div><small>One or more selected filters apply</small></div>`;
+      card.appendChild(ov);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const tdiv = document.createElement('div'); tdiv.className='title'; tdiv.textContent = item.title;
+    const rdiv = document.createElement('div'); rdiv.className='rating'; rdiv.textContent = item.rating ? `★ ${item.rating}` : '—';
+    const pdiv = document.createElement('div'); pdiv.className='providers'; pdiv.textContent = item.providerEntry ? item.providerEntry.providers : '';
+    meta.appendChild(tdiv); meta.appendChild(rdiv); meta.appendChild(pdiv);
+
+    const actions = document.createElement('div'); actions.className='actions';
+    if(item.providerEntry && item.providerEntry.link){
+      const play = document.createElement('button');
+      play.className='smallBtn playBtn';
+      play.textContent = '▶ Watch';
+      play.onclick = ()=> { window.location.href = item.providerEntry.link; };
+      actions.appendChild(play);
+    } else {
+      const play = document.createElement('button');
+      play.className='smallBtn playBtn';
+      play.textContent = 'ℹ Provider';
+      play.onclick = ()=> { 
+        const tmdbUrl = `https://
